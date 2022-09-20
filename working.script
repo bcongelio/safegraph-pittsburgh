@@ -1,0 +1,12 @@
+patterns_df <- read.csv("pitt-data.csv")
+
+patterns_df$date_range_start <- as.Date(patterns_df$date_range_start, format = "%Y-%m-%d")
+patterns_df$date_range_end <- as.Date(patterns)
+patterns_df <- patterns_df[-which(patterns_df$date_range_start == ""), ]
+
+start_date <- as.Date("2018-01-01")
+
+day_data_df <- expand_integer_json(patterns_df,
+                               expand = 'visits_by_day',
+                               index = 'day',
+                               by = c("placekey", "date_range_start"))
