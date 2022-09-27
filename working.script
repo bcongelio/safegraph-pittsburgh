@@ -31,4 +31,29 @@ to.merge.distinct <- to.merge %>%
 merged.data <- inner_join(day_data_df, to.merge.distinct, by = c("placekey" = "placekey"))
 
 ### ADDING RUNNING DATE TO MERGED DATA
-testing <- merged.data
+merged.data <- merged.data %>%
+  group_by(placekey, date_range_start) %>%
+  mutate(date = first(date_range_start) + days(1 * row_number() - 1))
+
+
+
+### GRABBING 2018 STEELERS SCHEDULE FOR MERGING
+steelers.2018 <- nflreadr::load_schedules(seasons = 2018) %>%
+  filter(home_team == "PIT") %>%
+  select(gameday, weekday, gametime, away_team, home_moneyline, div_game)
+
+### CLEANING UP DATE VARIABLE
+steelers.2018$gameday <- as.Date(steelers.2018$gameday, format = "%Y-%m-%d")
+
+### STANDARDIZING VARIABLE NAMES FOR USE WITH OTHER TEAMS
+steelers.2018 <- steelers.2018 %>%
+  rename(game_date = gameday,
+         week_day = weekday,
+         oppo = away_team,
+         moneyline = home_moneyline,
+         divisional = div_game)
+
+### MERGING STEELERS DATA INTO MAIN DATA
+merged.data <- merged.data %>%
+  left_join(steelers.2018, by = c("date" = "game_date"))
+
