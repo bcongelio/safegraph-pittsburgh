@@ -32,7 +32,3 @@ merged.data <- inner_join(day_data_df, to.merge.distinct, by = c("placekey" = "p
 
 ### ADDING RUNNING DATE TO MERGED DATA
 testing <- merged.data
-
-testing <- testing %>%
-  group_by(placekey, date_range_start) %>%
-  mutate(day = first(date_range_start) + lubridate::days(1))
