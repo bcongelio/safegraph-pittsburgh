@@ -1,12 +1,38 @@
-patterns_df <- read.csv("pitt-data.csv")
+library(tidyverse)
+library(lubridate)
+library(SafeGraphR)
+
+### READING IN FILES
+
+patterns_df <- readr::read_csv("pitt-data.csv")
+
+### CLEANING UP DATE_RANGE_START VARIABLE
 
 patterns_df$date_range_start <- as.Date(patterns_df$date_range_start, format = "%Y-%m-%d")
-patterns_df$date_range_end <- as.Date(patterns)
-patterns_df <- patterns_df[-which(patterns_df$date_range_start == ""), ]
 
-start_date <- as.Date("2018-01-01")
+### SELECTING VARIABLES TO MERGE BACK IN AFTER EXPANSION
+
+to.merge <- patterns_df %>%
+  select(placekey, parent_placekey, location_name, sub_category, latitude, longitude,
+         street_address, city, region, postal_code, polygon_wkt, poi_cbg)
+
+### EXPANDING VISITS_BY_DAY
 
 day_data_df <- expand_integer_json(patterns_df,
-                               expand = 'visits_by_day',
-                               index = 'day',
-                               by = c("placekey", "date_range_start"))
+                                   expand = "visits_by_day",
+                                   index = "day",
+                                   by = c("placekey", "date_range_start"))
+
+### MERGING BACK IN OTHER VARIABLES
+
+to.merge.distinct <- to.merge %>%
+  distinct(placekey, .keep_all = TRUE)
+
+merged.data <- inner_join(day_data_df, to.merge.distinct, by = c("placekey" = "placekey"))
+
+### ADDING RUNNING DATE TO MERGED DATA
+testing <- merged.data
+
+testing <- testing %>%
+  group_by(placekey, date_range_start) %>%
+  mutate(day = first(date_range_start) + lubridate::days(1))
