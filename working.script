@@ -1,6 +1,7 @@
 library(tidyverse)
 library(lubridate)
 library(SafeGraphR)
+library(baseballr)
 
 ### READING IN FILES
 
@@ -31,16 +32,16 @@ to.merge.distinct <- to.merge %>%
 merged.data <- inner_join(day_data_df, to.merge.distinct, by = c("placekey" = "placekey"))
 
 ### ADDING RUNNING DATE TO MERGED DATA
+
+### ADDING RUNNING DATE TO MERGED DATA
 merged.data <- merged.data %>%
   group_by(placekey, date_range_start) %>%
   mutate(date = first(date_range_start) + days(1 * row_number() - 1))
 
-
-
 ### GRABBING 2018 STEELERS SCHEDULE FOR MERGING
 steelers.2018 <- nflreadr::load_schedules(seasons = 2018) %>%
   filter(home_team == "PIT") %>%
-  select(gameday, weekday, gametime, away_team, home_moneyline, div_game)
+  select(gameday, weekday, away_team, home_moneyline, div_game)
 
 ### CLEANING UP DATE VARIABLE
 steelers.2018$gameday <- as.Date(steelers.2018$gameday, format = "%Y-%m-%d")
@@ -48,12 +49,53 @@ steelers.2018$gameday <- as.Date(steelers.2018$gameday, format = "%Y-%m-%d")
 ### STANDARDIZING VARIABLE NAMES FOR USE WITH OTHER TEAMS
 steelers.2018 <- steelers.2018 %>%
   rename(game_date = gameday,
-         week_day = weekday,
-         oppo = away_team,
-         moneyline = home_moneyline,
-         divisional = div_game)
+         steelers.weekday = weekday,
+         steelers.oppo = away_team,
+         steelers.moneyline = home_moneyline,
+         steelers.div = div_game)
 
 ### MERGING STEELERS DATA INTO MAIN DATA
 merged.data <- merged.data %>%
   left_join(steelers.2018, by = c("date" = "game_date"))
+
+### GETTING PIRATES 2018 SCHEDULE
+pirates.2018 <- baseballr::mlb_schedule(season = 2018) %>%
+  filter(teams_home_team_name == "Pittsburgh Pirates" & series_description == "Regular Season") %>%
+  select(date, teams_away_team_name)
+
+### NO PACKAGE FOR HISTORICAL MLB MONEYLINES, SO DOING THIS THE OLD-FASHIONED WAY
+moneylines <- c(-138, -110, -150, 111, -131, -148, -128, -137, -120, -199, -155, -151, 115, 113, 111,
+                -122, -120, -145, -131, -174, -122, -112, -119, -140, -139, -130, -107, -121, -106, 117, 121, 112, 105, -122,
+                -134, -103, -150, -100, -120, -111, -119, 108, -101, -119, -104, -135, -160, 100, 107, 124, -120, -113,
+                -105, 116, -110, -141, -134, 115, -151, -111, 116, -155, -113, -102, 107, 117, -150, -117, -125,
+                112, -101, -129, -137, -132, -180, -203, -156, -170, -219, -214, 123, 112, 135)
+
+pirates.moneylines <- data.frame(moneylines)
+
+### ADDING PIRATES MONEYLINES TO PIRATES SCHEDULE
+pirates.2018 <- cbind(pirates.2018, pirates.moneylines)
+
+### PIRATES ADDING NLC OPPONENTS
+
+pirates.2018 <- pirates.2018 %>%
+  mutate(pirates.div = if_else(teams_away_team_name %in% c("St. Louis Cardinals",
+                                                           "Milwaukee Brewers",
+                                                           "Chicago Cubs",
+                                                           "Cincinnati Reds"), 1, 0))
+
+### ADDING DAY OF WEEK TO PIRATES SCHEDULE
+pirates.2018$pirates.weekday <- weekdays(as.Date(pirates.2018$date))
+
+### RENAMING VARIABLES
+pirates.2018 <- pirates.2018 %>%
+  rename(game_date = date,
+         pirates.oppo = teams_away_team_name,
+         pirates.moneyline = moneylines)
+
+### SWITCHING PIRATES GAMEDATE TO DATE TYPE FOR MERGING PURPOSES
+pirates.2018$game_date <- as.Date(pirates.2018$game_date)
+
+### MERGING WITH OTHER DATA
+merged.data <- merged.data %>%
+  left_join(pirates.2018, by = c("date" = "game_date"))
 
