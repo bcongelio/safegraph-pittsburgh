@@ -99,3 +99,5 @@ pirates.2018$game_date <- as.Date(pirates.2018$game_date)
 merged.data <- merged.data %>%
   left_join(pirates.2018, by = c("date" = "game_date"))
 
+
+
