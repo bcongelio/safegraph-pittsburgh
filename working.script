@@ -4,12 +4,7 @@ library(SafeGraphR)
 library(baseballr)
 library(sf)
 library(mapboxapi)
-library(xgboost)
-library(caret)
-library(caTools)
-library(cvms)
-library(neuralnet)
-
+library(tidymodels)
 
 ####################
 ## DATA PREP
@@ -200,6 +195,7 @@ readRenviron("~/.Renviron")
 
 ### CREATING SUBSET OF DATA TO CREATE DISTANCE MATRIX   ## note: must drop NA coord values and repeat on main data prior to merge
 distance.data <- merged.data %>%
+  ungroup() %>%
   filter(!is.na(longitude) & !is.na(latitude)) %>%
   distinct(placekey, longitude, latitude) %>%
   st_as_sf(coords = c("longitude", "latitude"),
@@ -242,91 +238,56 @@ write.csv(merged.data, "cleaned-data.csv")
 
 merged.data <- readr::read_csv("cleaned-data.csv")
 
-### SUBSETTING MERGED.DATA TO INCLUDE JUST FACTORS NEEDED FOR XGBOOST AND NEURAL NETWORK MODELING
+### SELECTING FROM MERGED.DATA TO INCLUDE JUST ITEMS NEEDED FOR XGBOOST
 model.data <- merged.data %>%
+  ungroup() %>%
   select(placekey, visits_by_day, st.oppo, st.ml, st.div, st.weekday,
          pi.oppo, pi.ml, pi.div, pi.weekday, pe.oppo, pe.ml, pe.div,
          pe.weekday, tempmax, tempmin, temp, humidity, precip, precipprob,
-         snow, windgust, windspeed, cloudcover, icon)
+         snow, windgust, windspeed, cloudcover, icon, pnc.distance, heinz.distance, ppg.distance)
 
-train_labels <- model.data %>%
-  select(placekey)
+model.data$visits_by_day <- as.factor(model.data$visits_by_day)
 
-model.data <- model.data %>%
-  mutate(place.id = as.numeric(factor(placekey)))
+### SPLITTING INTO TRAINING AND TESTING
+set.seed(1988)
+pitt.split <- initial_split(model.data, prop = .7, strata = visits_by_day)
+pitt_train <- training(pitt.split)
+pitt_test <- testing(pitt.split)
 
-model.data <- model.data %>%
-  select(-placekey)
+### SETTING UP MODEL SPECIFICATION
+xgb_spec <- boost_tree(
+  trees = 1000, 
+  tree_depth = tune(), min_n = tune(), 
+  loss_reduction = tune(),                     
+  sample_size = tune(), mtry = tune(),        
+  learn_rate = tune()) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("classification")
 
-trainIndex <- createDataPartition(model.data$place.id, p = .7,
-                                  list = FALSE,
-                                  times = 1)
+### VALUES FOR HYPERPARAMETERS
+xgb_grid <- grid_latin_hypercube(
+  tree_depth(),
+  min_n(),
+  loss_reduction(),
+  sample_size = sample_prop(),
+  finalize(mtry(), pitt_train),
+  learn_rate(),
+  size = 30)
 
-pitt.train <- model.data[trainIndex,]
-pitt.test <- model.data[-trainIndex,]
+### PLACING THE MODEL SPECIFICATION INTO A TIDYMODELS WORKFLOW
+xgb_wf <- workflow() %>%
+  add_formula(visits_by_day ~ .) %>%
+  add_model(xgb_spec)
 
-X_train <- training_data[,c("st.oppo", "st.ml", "st.div", "st.weekday", "pi.oppo", "pi.ml", "pi.div", "pi.weekday",
-                         "pe.oppo", "pe.ml", "pe.div", "pe.weekday", "tempmax", "tempmin", "temp", "humidity",
-                         "precip", "precipprob", "snow", "windgust", "windspeed", "cloudcover", "icon")]
+### FOLDS FOR CROSS-VALIDATION
+pitt_folds <- vfold_cv(pitt_train, strata = visits_by_day)
 
-X_test <- test_data[,c("st.oppo", "st.ml", "st.div", "st.weekday", "pi.oppo", "pi.ml", "pi.div", "pi.weekday",
-                       "pe.oppo", "pe.ml", "pe.div", "pe.weekday", "tempmax", "tempmin", "temp", "humidity",
-                       "precip", "precipprob", "snow", "windgust", "windspeed", "cloudcover", "icon")]
-
-y_train <- training_data$visits_by_day
-y_test <- test_data$visits_by_day
-set.seed(1234)
-
-
-train_test_split <- function(data, percentage) {
-  data_with_row_id <- data %>%
-    mutate(id = row_number())
-  
-  set.seed(1234)
-  training_data <- data_with_row_id %>%
-    sample_frac(percentage)
-  test_data <- anti_join(
-    data_with_row_id,
-    training_data,
-    by = "id")
-  
-  training_data$id <- NULL
-  test_data$id <- NULL
-  
-  return (list(training_data, test_data))
-}
-
-training_data <- train_test_split(
-  model.data, 0.8
-)[[1]]
-test_data <- train_test_split(
-  model.data, 0.8
-)[[2]]
+### ATTEMPTING TO TUNE THE MODEL  note:: getting error when trying to run this
+set.seed(1984)
+xgb_res <- tune_grid(
+  xgb_wf,
+  resamples = pitt_folds,
+  grid = xgb_grid,
+  control = control_grid(save_pred = TRUE))
 
 
-params <- list(
-  booster = "gbtree",
-  eval_metric = "logloss"
-)
-
-
-xgb <- xgboost(
-  data = as.matrix(X_train),
-  label = y_train,
-  nround = 50,
-  max_depth = 100
-)
-
-
-xgb <- xgboost::xgb.cv(
-  data = as.matrix(X_train),
-  label = y_train,
-  params = params,
-  nrounds = 15000,
-  nfold = 50
-)
-
-
-ggplot(data = xgb$evaluation_log, aes(x = iter, y = train_rmse)) +
-  geom_line() +
-  geom_point()
