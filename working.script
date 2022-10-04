@@ -6,6 +6,9 @@ library(sf)
 library(mapboxapi)
 library(xgboost)
 library(caret)
+library(caTools)
+library(cvms)
+
 
 ####################
 ## DATA PREP
@@ -224,6 +227,8 @@ merged.data <- merged.data %>%
 merged.data <- merged.data %>%
   left_join(distance.data, by = c("placekey" = "placekey"))
 
+write.csv(merged.data, "cleaned-data.csv")
+
 
 #####################
 ## DATA CLEANING AND PREP IS NOW COMPLETE
@@ -236,12 +241,64 @@ merged.data <- merged.data %>%
 
 ### SUBSETTING MERGED.DATA TO INCLUDE JUST FACTORS NEEDED FOR XGBOOST AND NEURAL NETWORK MODELING
 model.data <- merged.data %>%
-  select(placekey, visits_by_day, date, st.oppo, st.ml, st.div, st.weekday,
+  select(placekey, visits_by_day, st.oppo, st.ml, st.div, st.weekday,
          pi.oppo, pi.ml, pi.div, pi.weekday, pe.oppo, pe.ml, pe.div,
          pe.weekday, tempmax, tempmin, temp, humidity, precip, precipprob,
          snow, windgust, windspeed, cloudcover, icon, pnc.distance,
          heinz.distance, ppg.distance)
 
+model.data <- model.data %>%
+  filter(!is.na(placekey))
 
+model.data <- model.data %>%
+  mutate(place.id = as.numeric(factor(placekey)))
 
+model.data <- model.data %>%
+  dplyr::select(-placekey)
+
+folds <- splitTools::create_folds(
+  y = model.data$place.id,
+  k = 5,
+  type = "grouped",
+  invert = TRUE)
+
+### XGBOOST MODELING ###
+
+### SETTNG SEED TO MAKE MODEL REPRODUCIBLE
+set.seed(1984)
+
+### SPLITTING THE DATA INTO TRAINING AND TESTING SETS
+trainIndex <- createDataPartition(model.data$visits_by_day, p = .8,
+                                  list = FALSE,
+                                  times = 1)
+
+pittTrain <- model.data[trainIndex,]
+pittTest <- model.data[-trainIndex,]
+
+train_labels <- pittTrain %>%
+  dplyr::select(place.id)
+
+pittTrain <- pittTrain %>%
+  select(-place.id)
+
+xgb_params <- list(
+  booster = "gbtree",
+  objective = "binary:logistic",
+  eval_metric = "logloss",
+  eta = 0.01,
+  max_depth = 8,
+  gamma = 4,
+  subsample = 0.75,
+  colsample_bytree = 1)
+
+xgb_model <- xgboost::xgb.cv(
+  data = as.matrix(pittTrain),
+  label = train_labels$place.id,
+  params = xgb_params,
+  nrounds = 15000,
+  folds = folds,
+  metrics = list("logloss"),
+  early_stopping_rounds = 50,
+  print_every_n = 50
+)
 
