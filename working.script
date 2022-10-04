@@ -3,6 +3,8 @@ library(lubridate)
 library(SafeGraphR)
 library(baseballr)
 library(neuralnet)
+library(weatherData)
+library(mapboxapi)
 
 ####################
 ## DATA PREP
@@ -158,3 +160,58 @@ penguins_info <- penguins_info %>%
 ### MERGING PENGUINS DATA WITH MAIN DATA
 merged.data <- merged.data %>%
   left_join(penguins_info, by = c("date" = "game_date"))
+
+
+#####################
+## WEATHER DATA   ## note: historical weather data obtained from visualcrossing.com
+#####################
+
+pitt_wx <- readr::read_csv("pitt_wx.csv")
+
+### CLEANING UP DATE VARIABLE FOR WEATHER DATA
+pitt_wx$datetime <- as.Date(pitt_wx$datetime, format = "%Y-%m-%d")
+
+### SELECTING RELEVANT COLUMNS FROM WEATHER DATA
+pitt_wx <- pitt_wx %>%
+  select(datetime, tempmax, tempmin, temp, humidity, precip, precipprob,
+         snow, windgust, windspeed, cloudcover, icon)
+
+### CONVERTING WEATHER ICON CHARACTER TO NUMERIC INTEGER
+pitt_wx$icon <- as.factor(pitt_wx$icon)
+pitt_wx$icon <- as.integer(pitt_wx$icon)
+
+### MERGING WEATHER DATA INTO MAIN DATA
+merged.data <- merged.data %>%
+  left_join(pitt_wx, by = c("date" = "datetime"))
+
+
+#####################
+## CALCULATING DISTANCE FROM STADIUM FOR EACH RESTAURANT
+#####################
+
+### PROVIDING API CREDENTIALS FOR MAPBOX API SYSTEM
+mb_access_token(my_token, overwrite = TRUE, install = TRUE)
+readRenviron("~/.Renviron")
+
+### SLICING MERGED.DATA TO INCLUDE JUST PLACEKEY AND COORDINATE INFORMATION
+for.distance <- merged.data %>%
+  ungroup() %>%
+  select(placekey, polygon_wkt, latitude, longitude)
+
+### GETTING COORDINATE INFORMATION FOR PNC PARK
+pnc.distance <- mb_geocode("PNC Park, Pittsburgh PA")
+### MAPPING TIME IN MINUTES TO PNC PARK FROM RESTAURANTS/BARS
+to.pnc <- mb_matrix(for.distance, pnc.distance)
+
+head(for.distance)
+dput(for.distance[1:10, ])
+
+
+
+
+
+
+
+
+
+
