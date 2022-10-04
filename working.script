@@ -8,6 +8,7 @@ library(xgboost)
 library(caret)
 library(caTools)
 library(cvms)
+library(neuralnet)
 
 
 ####################
@@ -239,66 +240,93 @@ write.csv(merged.data, "cleaned-data.csv")
 ## MODEL CREATION
 #####################
 
+merged.data <- readr::read_csv("cleaned-data.csv")
+
 ### SUBSETTING MERGED.DATA TO INCLUDE JUST FACTORS NEEDED FOR XGBOOST AND NEURAL NETWORK MODELING
 model.data <- merged.data %>%
   select(placekey, visits_by_day, st.oppo, st.ml, st.div, st.weekday,
          pi.oppo, pi.ml, pi.div, pi.weekday, pe.oppo, pe.ml, pe.div,
          pe.weekday, tempmax, tempmin, temp, humidity, precip, precipprob,
-         snow, windgust, windspeed, cloudcover, icon, pnc.distance,
-         heinz.distance, ppg.distance)
+         snow, windgust, windspeed, cloudcover, icon)
 
-model.data <- model.data %>%
-  filter(!is.na(placekey))
+train_labels <- model.data %>%
+  select(placekey)
 
 model.data <- model.data %>%
   mutate(place.id = as.numeric(factor(placekey)))
 
 model.data <- model.data %>%
-  dplyr::select(-placekey)
+  select(-placekey)
 
-folds <- splitTools::create_folds(
-  y = model.data$place.id,
-  k = 5,
-  type = "grouped",
-  invert = TRUE)
-
-### XGBOOST MODELING ###
-
-### SETTNG SEED TO MAKE MODEL REPRODUCIBLE
-set.seed(1984)
-
-### SPLITTING THE DATA INTO TRAINING AND TESTING SETS
-trainIndex <- createDataPartition(model.data$visits_by_day, p = .8,
+trainIndex <- createDataPartition(model.data$place.id, p = .7,
                                   list = FALSE,
                                   times = 1)
 
-pittTrain <- model.data[trainIndex,]
-pittTest <- model.data[-trainIndex,]
+pitt.train <- model.data[trainIndex,]
+pitt.test <- model.data[-trainIndex,]
 
-train_labels <- pittTrain %>%
-  dplyr::select(place.id)
+X_train <- training_data[,c("st.oppo", "st.ml", "st.div", "st.weekday", "pi.oppo", "pi.ml", "pi.div", "pi.weekday",
+                         "pe.oppo", "pe.ml", "pe.div", "pe.weekday", "tempmax", "tempmin", "temp", "humidity",
+                         "precip", "precipprob", "snow", "windgust", "windspeed", "cloudcover", "icon")]
 
-pittTrain <- pittTrain %>%
-  select(-place.id)
+X_test <- test_data[,c("st.oppo", "st.ml", "st.div", "st.weekday", "pi.oppo", "pi.ml", "pi.div", "pi.weekday",
+                       "pe.oppo", "pe.ml", "pe.div", "pe.weekday", "tempmax", "tempmin", "temp", "humidity",
+                       "precip", "precipprob", "snow", "windgust", "windspeed", "cloudcover", "icon")]
 
-xgb_params <- list(
+y_train <- training_data$visits_by_day
+y_test <- test_data$visits_by_day
+set.seed(1234)
+
+
+train_test_split <- function(data, percentage) {
+  data_with_row_id <- data %>%
+    mutate(id = row_number())
+  
+  set.seed(1234)
+  training_data <- data_with_row_id %>%
+    sample_frac(percentage)
+  test_data <- anti_join(
+    data_with_row_id,
+    training_data,
+    by = "id")
+  
+  training_data$id <- NULL
+  test_data$id <- NULL
+  
+  return (list(training_data, test_data))
+}
+
+training_data <- train_test_split(
+  model.data, 0.8
+)[[1]]
+test_data <- train_test_split(
+  model.data, 0.8
+)[[2]]
+
+
+params <- list(
   booster = "gbtree",
-  objective = "binary:logistic",
-  eval_metric = "logloss",
-  eta = 0.01,
-  max_depth = 8,
-  gamma = 4,
-  subsample = 0.75,
-  colsample_bytree = 1)
-
-xgb_model <- xgboost::xgb.cv(
-  data = as.matrix(pittTrain),
-  label = train_labels$place.id,
-  params = xgb_params,
-  nrounds = 15000,
-  folds = folds,
-  metrics = list("logloss"),
-  early_stopping_rounds = 50,
-  print_every_n = 50
+  eval_metric = "logloss"
 )
 
+
+xgb <- xgboost(
+  data = as.matrix(X_train),
+  label = y_train,
+  nround = 50,
+  max_depth = 100
+)
+
+
+xgb <- xgboost::xgb.cv(
+  data = as.matrix(X_train),
+  label = y_train,
+  params = params,
+  nrounds = 15000,
+  nfold = 50
+)
+
+
+ggplot(data = xgb$evaluation_log, aes(x = iter, y = train_rmse)) +
+  geom_line() +
+  geom_point()
