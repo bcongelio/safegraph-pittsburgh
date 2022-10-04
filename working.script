@@ -205,13 +205,3 @@ to.pnc <- mb_matrix(for.distance, pnc.distance)
 
 head(for.distance)
 dput(for.distance[1:10, ])
-
-
-
-
-
-
-
-
-
-
