@@ -2,9 +2,10 @@ library(tidyverse)
 library(lubridate)
 library(SafeGraphR)
 library(baseballr)
-library(neuralnet)
-library(weatherData)
+library(sf)
 library(mapboxapi)
+library(xgboost)
+library(caret)
 
 ####################
 ## DATA PREP
@@ -189,19 +190,58 @@ merged.data <- merged.data %>%
 ## CALCULATING DISTANCE FROM STADIUM FOR EACH RESTAURANT
 #####################
 
-### PROVIDING API CREDENTIALS FOR MAPBOX API SYSTEM
-mb_access_token(my_token, overwrite = TRUE, install = TRUE)
+### PROVING CREDENTIALS FOR MAPBOX API SERVICES  ## note: access token is removed from public code
+mb_access_token(my_token, overwrite  = TRUE, install = TRUE) ##FOR MAPBOX API
 readRenviron("~/.Renviron")
 
-### SLICING MERGED.DATA TO INCLUDE JUST PLACEKEY AND COORDINATE INFORMATION
-for.distance <- merged.data %>%
-  ungroup() %>%
-  select(placekey, polygon_wkt, latitude, longitude)
+### CREATING SUBSET OF DATA TO CREATE DISTANCE MATRIX   ## note: must drop NA coord values and repeat on main data prior to merge
+distance.data <- merged.data %>%
+  filter(!is.na(longitude) & !is.na(latitude)) %>%
+  distinct(placekey, longitude, latitude) %>%
+  st_as_sf(coords = c("longitude", "latitude"),
+           crs = "+proj=longlat +datum=WGS84 +ellps=WGS84")
 
-### GETTING COORDINATE INFORMATION FOR PNC PARK
+### GETTING COORDINATE INFOMATION FOR EACH STADIUM
 pnc.distance <- mb_geocode("PNC Park, Pittsburgh PA")
-### MAPPING TIME IN MINUTES TO PNC PARK FROM RESTAURANTS/BARS
-to.pnc <- mb_matrix(for.distance, pnc.distance)
+heinz.distance <- mb_geocode("Heinz Field, Pittsburgh PA")
+ppg.distance <- mb_geocode("PPG Paints Arena, Pittsburgh PA")
 
-head(for.distance)
-dput(for.distance[1:10, ])
+### MAPPING MINUTES TO EACH STADIUM VIA SF TRACT CENTROIDS
+minutes_to_pnc <- mb_matrix(distance.data, pnc.distance)
+minutes_to_heinz <- mb_matrix(distance.data, heinz.distance)
+minutes_to_ppg <- mb_matrix(distance.data, ppg.distance)
+
+### ADDING DISTANCE IN TIME MATRIX FOR EACH STADIUM TO EACH PLACEKEY
+distance.data$pnc.distance <- as.numeric(minutes_to_pnc)
+distance.data$heinz.distance <- as.numeric(minutes_to_heinz)
+distance.data$ppg.distance <- as.numeric(minutes_to_ppg)
+
+### REPEATING THE DROPPING OF NA COORD VALUES IN MAIN DATA IN ORDER TO SUCCESSFULLY COMPLETE THE MERGE
+merged.data <- merged.data %>%
+  filter(!is.na(longitude) & !is.na(latitude))
+
+### MERGING DISTANCE DATA INTO MAIN DATA VIA MATCHING PLACEKEY
+merged.data <- merged.data %>%
+  left_join(distance.data, by = c("placekey" = "placekey"))
+
+
+#####################
+## DATA CLEANING AND PREP IS NOW COMPLETE
+#####################
+
+
+#####################
+## MODEL CREATION
+#####################
+
+### SUBSETTING MERGED.DATA TO INCLUDE JUST FACTORS NEEDED FOR XGBOOST AND NEURAL NETWORK MODELING
+model.data <- merged.data %>%
+  select(placekey, visits_by_day, date, st.oppo, st.ml, st.div, st.weekday,
+         pi.oppo, pi.ml, pi.div, pi.weekday, pe.oppo, pe.ml, pe.div,
+         pe.weekday, tempmax, tempmin, temp, humidity, precip, precipprob,
+         snow, windgust, windspeed, cloudcover, icon, pnc.distance,
+         heinz.distance, ppg.distance)
+
+
+
+
