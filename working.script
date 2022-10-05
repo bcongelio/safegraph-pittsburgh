@@ -6,6 +6,7 @@ library(sf)
 library(mapboxapi)
 library(tidymodels)
 
+
 ####################
 ## DATA PREP
 ####################
@@ -241,7 +242,7 @@ merged.data <- readr::read_csv("cleaned-data.csv")
 ### SELECTING FROM MERGED.DATA TO INCLUDE JUST ITEMS NEEDED FOR XGBOOST
 model.data <- merged.data %>%
   ungroup() %>%
-  select(placekey, visits_by_day, st.oppo, st.ml, st.div, st.weekday,
+  select(visits_by_day, st.oppo, st.ml, st.div, st.weekday,
          pi.oppo, pi.ml, pi.div, pi.weekday, pe.oppo, pe.ml, pe.div,
          pe.weekday, tempmax, tempmin, temp, humidity, precip, precipprob,
          snow, windgust, windspeed, cloudcover, icon, pnc.distance, heinz.distance, ppg.distance)
@@ -250,19 +251,19 @@ model.data$visits_by_day <- as.factor(model.data$visits_by_day)
 
 ### SPLITTING INTO TRAINING AND TESTING
 set.seed(1988)
-pitt.split <- initial_split(model.data, prop = .7, strata = visits_by_day)
+pitt.split <- initial_split(model.data)
 pitt_train <- training(pitt.split)
 pitt_test <- testing(pitt.split)
 
 ### SETTING UP MODEL SPECIFICATION
 xgb_spec <- boost_tree(
-  trees = 1000, 
+  trees = 50, 
   tree_depth = tune(), min_n = tune(), 
   loss_reduction = tune(),                     
   sample_size = tune(), mtry = tune(),        
   learn_rate = tune()) %>% 
   set_engine("xgboost") %>% 
-  set_mode("classification")
+  set_mode("regression")
 
 ### VALUES FOR HYPERPARAMETERS
 xgb_grid <- grid_latin_hypercube(
@@ -272,7 +273,7 @@ xgb_grid <- grid_latin_hypercube(
   sample_size = sample_prop(),
   finalize(mtry(), pitt_train),
   learn_rate(),
-  size = 30)
+  size = 5)
 
 ### PLACING THE MODEL SPECIFICATION INTO A TIDYMODELS WORKFLOW
 xgb_wf <- workflow() %>%
@@ -280,7 +281,7 @@ xgb_wf <- workflow() %>%
   add_model(xgb_spec)
 
 ### FOLDS FOR CROSS-VALIDATION
-pitt_folds <- vfold_cv(pitt_train, strata = visits_by_day)
+pitt_folds <- vfold_cv(pitt_train)
 
 ### ATTEMPTING TO TUNE THE MODEL  note:: getting error when trying to run this
 set.seed(1984)
@@ -290,4 +291,30 @@ xgb_res <- tune_grid(
   grid = xgb_grid,
   control = control_grid(save_pred = TRUE))
 
+xgb_res
+
+### VISUALIZING THE RESULTS
+xgb_res %>%
+  collect_metrics() %>%
+  filter(.metric == "roc_auc") %>%
+  select(mean, mtry:sample_size) %>%
+  pivot_longer(mtry:sample_size,
+               values_to = "value",
+               names_to = "parameter") %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(alpha = 0.8, show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "AUC")
+
+xgb_mod <- boost_tree('regression') %>%
+  set_engine('xgboost', objective = 'reg:squarederror')
+
+xgb_wfl <- workflow() %>%
+  add_formula(visits_by_day ~ .) %>%
+  add_model(xgb_mod)
+
+fit(xgb_wfl, data = pitt_train)
+
+install_github("tidymodels/tidymodels")
+2
 
